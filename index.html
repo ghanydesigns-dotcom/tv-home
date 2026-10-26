@@ -17,9 +17,15 @@
   }
   #bg {
     position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-    background: radial-gradient(ellipse at 20% 0%, #1c2433 0%, #0b0b0f 60%);
-    -webkit-transition: background 4s ease; transition: background 4s ease;
+    background: #0b0b0f url("bg.jpg") center center no-repeat;
+    -webkit-background-size: cover; background-size: cover;
   }
+  #shade {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: -webkit-linear-gradient(top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.12) 38%, rgba(0,0,0,0.12) 58%, rgba(0,0,0,0.6) 100%);
+    background: linear-gradient(to bottom, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.12) 38%, rgba(0,0,0,0.12) 58%, rgba(0,0,0,0.6) 100%);
+  }
+  #clock, #date, #temp, #cond, #nextName { text-shadow: 0 0.15vw 1.2vw rgba(0,0,0,0.35); }
   .wrap {
     position: relative; width: 100%; height: 100%;
     padding: 5vw 6vw 4.5vw;
@@ -59,8 +65,8 @@
   #nextIn { color: rgba(245,245,247,0.5); }
   .prayers {
     display: -webkit-box; display: -webkit-flex; display: flex;
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(10,10,14,0.42);
+    border: 1px solid rgba(255,255,255,0.12);
     border-radius: 1.6vw; overflow: hidden;
   }
   .p {
@@ -85,6 +91,7 @@
 </head>
 <body>
 <div id="bg"></div>
+<div id="shade"></div>
 <div class="wrap">
   <div class="top">
     <div>
@@ -105,7 +112,7 @@
       <div id="nextName">— <span id="nextIn"></span></div>
     </div>
     <div class="prayers" id="prayers"></div>
-    <div class="footer"><span id="status">Updating…</span><span class="brand">G2C Home TV V.1.0</span></div>
+    <div class="footer"><span id="status">Updating…</span><span class="brand">G2C Home TV V.1.2</span></div>
   </div>
 </div>
 
@@ -136,6 +143,29 @@
     x.send();
   }
 
+  /* ---------- Cairo time (ignores the TV's own timezone setting) ---------- */
+  var offsetSec = null; // set from the weather service when available
+
+  function lastWeekday(year, month, weekday) { // last <weekday> of month, as UTC day number
+    var d = new Date(Date.UTC(year, month + 1, 0));
+    while (d.getUTCDay() !== weekday) d = new Date(d.getTime() - 86400000);
+    return d.getUTCDate();
+  }
+  function egyptOffset(ms) { // Egypt rule: UTC+3 from last Friday of April to last Thursday of October
+    var s = new Date(ms + 7200000);
+    var y = s.getUTCFullYear(), mo = s.getUTCMonth(), day = s.getUTCDate();
+    var start = lastWeekday(y, 3, 5), end = lastWeekday(y, 9, 4);
+    var dst = (mo > 3 && mo < 9) || (mo === 3 && day >= start) || (mo === 9 && day <= end);
+    return dst ? 10800 : 7200;
+  }
+  function cairo() {
+    var ms = new Date().getTime();
+    var off = offsetSec !== null ? offsetSec : egyptOffset(ms);
+    var d = new Date(ms + off * 1000);
+    return { h: d.getUTCHours(), m: d.getUTCMinutes(), s: d.getUTCSeconds(), wd: d.getUTCDay(),
+             date: d.getUTCDate(), mo: d.getUTCMonth(), y: d.getUTCFullYear() };
+  }
+
   function to12(h, m) {
     var ap = h >= 12 ? "PM" : "AM";
     var hh = h % 12; if (hh === 0) hh = 12;
@@ -144,26 +174,13 @@
 
   /* ---------- Clock ---------- */
   function tickClock() {
-    var d = new Date();
-    var c = to12(d.getHours(), d.getMinutes());
+    var d = cairo();
+    var c = to12(d.h, d.m);
     $("clock").innerHTML = c.t;
     $("ampm").innerHTML = c.ap;
-    $("date").innerHTML = DAYS[d.getDay()] + ", " + d.getDate() + " " + MONTHS[d.getMonth()];
-    updateBackground(d.getHours());
+    $("date").innerHTML = DAYS[d.wd] + ", " + d.date + " " + MONTHS[d.mo];
     if (prayers) updateNext(d);
-    if (d.getDate() !== prayerDay && d.getHours() >= 0 && prayers) loadPrayers();
-  }
-
-  function updateBackground(h) {
-    var g;
-    if (h >= 5 && h < 8) g = "radial-gradient(ellipse at 20% 0%, #3a2a3f 0%, #0b0b0f 60%)";
-    else if (h >= 8 && h < 16) g = "radial-gradient(ellipse at 20% 0%, #1f3348 0%, #0b0b0f 62%)";
-    else if (h >= 16 && h < 19) g = "radial-gradient(ellipse at 20% 0%, #3d2a22 0%, #0b0b0f 60%)";
-    else g = "radial-gradient(ellipse at 20% 0%, #161b2a 0%, #0b0b0f 60%)";
-    if ($("bg").getAttribute("data-g") !== g) {
-      $("bg").style.background = g;
-      $("bg").setAttribute("data-g", g);
-    }
+    if (d.date !== prayerDay && prayers) loadPrayers();
   }
 
   /* ---------- Weather ---------- */
@@ -194,6 +211,7 @@
       "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,is_day" +
       "&daily=temperature_2m_max,temperature_2m_min&timezone=Africa%2FCairo";
     getJSON(url, function (j) {
+      if (typeof j.utc_offset_seconds === "number") offsetSec = j.utc_offset_seconds;
       var c = j.current, d = j.daily;
       var w = describe(c.weather_code, c.is_day === 1);
       $("temp").innerHTML = Math.round(c.temperature_2m) + "°";
@@ -210,10 +228,10 @@
 
   /* ---------- Prayer times ---------- */
   function loadPrayers() {
-    var d = new Date();
-    var url = "https://api.aladhan.com/v1/timingsByCity/" + pad(d.getDate()) + "-" + pad(d.getMonth() + 1) + "-" + d.getFullYear() +
+    var d = cairo();
+    var url = "https://api.aladhan.com/v1/timingsByCity/" + pad(d.date) + "-" + pad(d.mo + 1) + "-" + d.y +
       "?city=" + CITY + "&country=" + COUNTRY + "&method=" + METHOD;
-    prayerDay = d.getDate();
+    prayerDay = d.date;
     getJSON(url, function (j) {
       var t = j.data.timings;
       prayers = [];
@@ -222,7 +240,7 @@
         prayers.push({ name: ORDER[i], h: parseInt(raw[0], 10), m: parseInt(raw[1], 10) });
       }
       renderPrayers();
-      updateNext(new Date());
+      updateNext(cairo());
       stamp();
     }, function () {
       prayerDay = -1;
@@ -242,7 +260,7 @@
   }
 
   function updateNext(d) {
-    var now = d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+    var now = d.h * 60 + d.m + d.s / 60;
     var next = -1;
     for (var i = 0; i < prayers.length; i++) {
       var el = $("p" + i);
@@ -261,7 +279,7 @@
   }
 
   function stamp() {
-    var d = new Date(), c = to12(d.getHours(), d.getMinutes());
+    var d = cairo(), c = to12(d.h, d.m);
     $("status").innerHTML = "Updated " + c.t + " " + c.ap;
   }
 
